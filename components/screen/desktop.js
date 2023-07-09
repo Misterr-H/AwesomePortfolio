@@ -37,7 +37,7 @@ export class Desktop extends Component {
     componentDidMount() {
         // google analytics
         ReactGA.pageview("/desktop");
-
+        this.openApp('about');
         this.fetchAppsData();
         this.setContextListeners();
         this.setEventListeners();
@@ -381,7 +381,7 @@ export class Desktop extends Component {
             if (currentApp) {
                 frequentApps.forEach((app) => {
                     if (app.id === currentApp.id) {
-                        app.frequency += 1; // increase the frequency if app is found 
+                        app.frequency += 1; // increase the frequency if app is found
                     }
                 });
             } else {
@@ -408,7 +408,6 @@ export class Desktop extends Component {
             }, 200);
         }
     }
-
     closeApp = (objId) => {
 
         // remove app from the app stack
@@ -429,7 +428,7 @@ export class Desktop extends Component {
     }
 
     focus = (objId) => {
-        // removes focus from all window and 
+        // removes focus from all window and
         // gives focus to window with 'id = objId'
         var focused_windows = this.state.focused_windows;
         focused_windows[objId] = true;
