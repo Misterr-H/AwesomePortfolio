@@ -194,6 +194,11 @@ input[type=range].ubuntu-slider::-webkit-slider-thumb {
     list-style: "📱";
 }
 
+.list-pen {
+    list-style: "🖊️";
+}
+
+
 .list-star {
     list-style: "🌟";
 }
