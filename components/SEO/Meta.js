@@ -7,12 +7,12 @@ export default function Meta() {
            /* Primary Meta Tags */
             <title>Himanshu Saini - Full Stack Developer</title>
             <meta charSet="utf-8" />
-            <meta name="title" content="Himanshu Saini - Full Stack Developer" />
+            <meta name="title" content="Himanshu Saini - Software Engineer" />
             <meta name="description"
-                content="Himanshu Saini - Full Stack Developer having experience with a lot of tech stacks including react native, flutter, reactjs" />
+                content="Himanshu Saini - Software Engineer" />
             <meta name="author" content="Himanshu Saini aka Misterr-H" />
             <meta name="keywords"
-                content="himanshu saini, full stack developer, reactjs developer, react-native developer, nextjs, tailwindcss, frontend developer, backend developer" />
+                content="himanshu saini, full stack developer, reactjs developer, react-native developer, nextjs, tailwindcss, frontend developer, backend developer, sde, SDE, Software Engineer" />
             <meta name="robots" content="index, follow" />
             <meta httpEquiv="Content-Type" content="text/html; charset=utf-8" />
             <meta name="language" content="English" />
@@ -22,25 +22,25 @@ export default function Meta() {
             /* Search Engine */
             <meta name="image" content="images/logos/favicon.ico" />
             /* Schema.org for Google */
-            <meta itemProp="name" content="Himanshu Saini - Full Stack Developer" />
+            <meta itemProp="name" content="Himanshu Saini - Software Engineer" />
             <meta itemProp="description"
-                content="Himanshu Saini - Full Stack Developer having experience with a lot of tech stacks including react native, flutter, reactjs" />
+                content="Himanshu Saini - Software Engineer" />
             <meta itemProp="image" content="images/logos/favicon.ico" />
             /* Twitter */
             <meta name="twitter:card" content="summary" />
-            <meta name="twitter:title" content="Himanshu Saini - Full Stack Developer" />
+            <meta name="twitter:title" content="Himanshu Saini - Software Engineer" />
             <meta name="twitter:description"
-                content="Himanshu Saini - Full Stack Developer having experience with a lot of tech stacks including react native, flutter, reactjs" />
+                content="Himanshu Saini - Software Engineer" />
             <meta name="twitter:site" content="himanshu-saini" />
             <meta name="twitter:creator" content="himanshu-saini" />
             <meta name="twitter:image:src" content="images/logos/logo_1024.png" />
             /* Open Graph general (Facebook, Pinterest & Google+) */
-            <meta name="og:title" content="Himanshu Saini - Full Stack Developer" />
+            <meta name="og:title" content="Himanshu Saini - Software Engineer" />
             <meta name="og:description"
-                content="Himanshu Saini - Full Stack Developer having experience with a lot of tech stacks including react native, flutter, reactjs" />
+                content="Himanshu Saini - Software Engineer" />
             <meta name="og:image" content="images/logos/logo_1200.png" />
             <meta name="og:url" content="https://himanshu-saini.com" />
-            <meta name="og:site_name" content="Himanshu Saini - Full Stack Developer" />
+            <meta name="og:site_name" content="Himanshu Saini - Software Engineer" />
             <meta name="og:locale" content="en_IN" />
             <meta name="og:type" content="website" />
 
