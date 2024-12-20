@@ -124,8 +124,8 @@ function About() {
                 <div className="bg-white absolute rounded-full p-0.5 md:p-1 top-0 transform -translate-y-1/2 right-0"></div>
             </div>
             <ul className=" mt-4 leading-tight tracking-tight text-sm md:text-base w-5/6 md:w-3/4 emoji-list">
-                <li className=" list-pc">Working as <span className=" font-medium">Tech Lead </span> at <u className=' cursor-pointer '> <a href="https://hobit.in" target={"_blank"}>Hobit Technologies</a> </u>  :)</li>
-                <li className=" mt-3 list-building"> I'm a full stack developer having experience with multiple web and mobile technologies.</li>
+                <li className=" list-pc"><span className=" font-medium">Founding Member</span> at <u className=' cursor-pointer '> <a href="https://hobit.in" target={"_blank"}>Hobfit</a> </u>  :)</li>
+                <li className=" mt-3 list-building"> Full stack developer having experience with multiple web and mobile technologies.</li>
                 <li className=" mt-3 list-pen"> I write regular Technical Blogs on <u><a className='text-underline' href="https://medium.com/@hs913271" target={"_blank"}>Medium.</a></u></li>
                 <li className=" mt-3 list-time"> Here's my <u><a className='text-underline' href="https://www.linkedin.com/in/himanshu--saini" target={"_blank"}>LinkedIn</a></u> and <u><a className='text-underline' href="https://github.com/Misterr-H" target={"_blank"}>Github</a></u> </li>
                 <li className=" mt-3 list-star"> I provide tech consultancy services. Drop a mail at <a className='text-underline' href='mailto:himanshu.saiini.91@gmail.com'><u>himanshu.saiini.91@gmail.com</u></a></li>
