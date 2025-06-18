@@ -116,19 +116,19 @@ function About() {
                 <img className="w-full" src="./images/logos/keyboard smash.png" alt="" />
             </div>
             <div className=" mt-4 md:mt-8 text-lg md:text-2xl text-center px-1">
-                <div>I'm <span className="font-bold">Himanshu Saini</span> ,</div>
-                <div className="font-normal ml-1">Your friendly neighbourhood <span className="text-pink-600 font-bold">Software Engineer!</span></div>
+                <div><span className="font-bold">Himanshu Saini</span></div>
+                <div className="font-normal ml-1">Cracked<span className="text-pink-600 font-bold"> Engineer!</span></div>
             </div>
             <div className=" mt-4 relative md:my-8 pt-px bg-white w-32 md:w-48">
                 <div className="bg-white absolute rounded-full p-0.5 md:p-1 top-0 transform -translate-y-1/2 left-0"></div>
                 <div className="bg-white absolute rounded-full p-0.5 md:p-1 top-0 transform -translate-y-1/2 right-0"></div>
             </div>
             <ul className=" mt-4 leading-tight tracking-tight text-sm md:text-base w-5/6 md:w-3/4 emoji-list">
-                <li className=" list-pc"><span className=" font-medium">Founding Member</span> at <u className=' cursor-pointer '> <a href="https://hobit.in" target={"_blank"}>Hobfit</a> </u>  :)</li>
-                <li className=" mt-3 list-building"> Full stack developer having experience with multiple web and mobile technologies.</li>
+                <li className=" list-building"><span className=" font-medium">Built</span> <u className=' cursor-pointer '> <a href="https://hobit.in" target={"_blank"}>Hobfit</a> </u>  from scratch (including all ai features)</li>
+                <li className=" mt-3 list-building"> Built  <u className=' cursor-pointer '> <a href="https://trackyour.dev" target={"_blank"}>TrackYourDev</a></u></li>
                 <li className=" mt-3 list-pen"> I write regular Technical Blogs on <u><a className='text-underline' href="https://medium.com/@hs913271" target={"_blank"}>Medium.</a></u></li>
-                <li className=" mt-3 list-time"> Here's my <u><a className='text-underline' href="https://www.linkedin.com/in/himanshu--saini" target={"_blank"}>LinkedIn</a></u> and <u><a className='text-underline' href="https://github.com/Misterr-H" target={"_blank"}>Github</a></u> </li>
-                <li className=" mt-3 list-star"> I provide tech consultancy services. Drop a mail at <a className='text-underline' href='mailto:himanshu.saiini.91@gmail.com'><u>himanshu.saiini.91@gmail.com</u></a></li>
+                <li className=" mt-3 list-time"> Here's my <u><a className='text-underline' href="https://www.linkedin.com/in/himanshu--saini" target={"_blank"}>LinkedIn</a></u>, <u><a className='text-underline' href="https://github.com/Misterr-H" target={"_blank"}>Github</a></u> and <u><a className='text-underline' href="https://x.com/himanshu_saiini" target={"_blank"}>Twitter/X</a></u> </li>
+                <li className=" mt-3 list-star"> Hire me <a className='text-underline' href='mailto:hs913271@gmail.com'><u>himanshu.saiini.91@gmail.com</u></a></li>
             </ul>
         </>
     )
