@@ -1,5 +1,4 @@
 import React from "react";
-import Clarity from '@microsoft/clarity';
 
 const buttonStyle = {
   position: "fixed",
@@ -27,7 +26,6 @@ const FloatingActionButton = () => {
       className="floating-action-btn"
       target="_blank"
       rel="noopener noreferrer"
-      onClick={() => Clarity.event('clicked_buy_button')}
     >
       Liked this portfolio? Make it yours -&gt;
       <style jsx>{`
