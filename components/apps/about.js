@@ -148,7 +148,7 @@ function Education() {
                     <div className=" text-lg md:text-xl text-left font-bold leading-tight">
                         JC Bose University of Science and Technology, YMCA
                     </div>
-                    <div className=" text-sm text-gray-400 mt-0.5">2020 - 20224</div>
+                    <div className=" text-sm text-gray-400 mt-0.5">2020 - 2024</div>
                     <div className=" text-sm md:text-base">Computer Engineering</div>
                     {/*<div className="text-sm text-gray-300 font-bold mt-1">CGPA &nbsp; 9.35/10</div>*/}
                 </li>
