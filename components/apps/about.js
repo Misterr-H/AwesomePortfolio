@@ -129,6 +129,7 @@ function About() {
                 <li className=" mt-3 list-pen"> I write regular Technical Blogs on <u><a className='text-underline' href="https://medium.com/@hs913271" target={"_blank"}>Medium.</a></u></li>
                 <li className=" mt-3 list-time"> Here's my <u><a className='text-underline' href="https://www.linkedin.com/in/himanshu--saini" target={"_blank"}>LinkedIn</a></u>, <u><a className='text-underline' href="https://github.com/Misterr-H" target={"_blank"}>Github</a></u> and <u><a className='text-underline' href="https://x.com/himanshu_saiini" target={"_blank"}>Twitter/X</a></u> </li>
                 <li className=" mt-3 list-star"> Hire me <a className='text-underline' href='mailto:hs913271@gmail.com'><u>himanshu.saiini.91@gmail.com</u></a></li>
+                <li className=" mt-3 list-music"> 🎵 Play music in your terminal: <code className="bg-gray-800 text-green-400 px-2 py-1 rounded text-xs">npx goofyy song_name</code> <button onClick={() => navigator.clipboard.writeText('npx goofyy song_name')} className="ml-2 bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-xs">Copy</button></li>
             </ul>
         </>
     )
