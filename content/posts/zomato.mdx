@@ -4,17 +4,15 @@ title: >-
   About
 publishedAt: 2026-03-27
 summary: >-
-  How Zomato assigns a delivery partner in under 60 seconds — the Redis GeoSets,
-  dispatch loops, and radius expansion logic powering real-time order
-  assignment.
+  How Zomato's dispatch system survives its worst nightmare and every
+  engineering decision it makes in the next 10 minutes.
 tags:
   - zomato
   - system-design
   - distributed-systems
   - redis
-coverImage: /images/blog/zomato/coverImage.jpg
+coverImage: /images/blog/zomato/coverImage.png
 ---
-
 Zomato has roughly 300,000 active delivery partners on the platform during a Friday dinner rush. Each one is sending a GPS ping every 2–3 seconds. That's approximately **150,000 location events per second** flowing into their backend. Before a single rider can be assigned to your order, the system needs to know — right now, not 3 seconds ago — which of those 300,000 riders is within 3 km of your restaurant, is currently unassigned, and has historically accepted orders in this area.
 
 That problem is harder than it looks. And the way Zomato solves it is not what most engineers would reach for first.
@@ -53,7 +51,7 @@ Every ping from a rider's app hits a lightweight ingestion endpoint, gets publis
 GEOADD riders 77.2090 28.6139 "rider:456"
 ```
 
-Redis GeoSets store coordinates encoded as a geohash inside a Sorted Set. The encoding is lossy by design — coordinates are stored with ~0.6 meter precision, which is more than sufficient for a radius query at city scale. The old value is simply overwritten on every ping. No history. No append. Just the latest position per rider. Memory footprint stays constant regardless of ping volume.
+Redis GeoSets store coordinates encoded as a geohash inside a Sorted Set. The encoding is lossy by design — coordinates are stored with \~0.6 meter precision, which is more than sufficient for a radius query at city scale. The old value is simply overwritten on every ping. No history. No append. Just the latest position per rider. Memory footprint stays constant regardless of ping volume.
 
 When an order comes in, the dispatch service fires a single query:
 
