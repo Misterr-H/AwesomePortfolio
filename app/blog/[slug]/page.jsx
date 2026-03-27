@@ -135,7 +135,7 @@ export default async function BlogPostPage({ params }) {
         )}
 
         {/* MDX Content */}
-        <div className="prose prose-invert prose-lg max-w-none prose-headings:font-semibold prose-a:text-[#E95420] hover:prose-a:text-[#f06030] prose-code:text-[#E95420] prose-pre:bg-gray-950 prose-pre:border prose-pre:border-gray-800">
+        <div className="prose prose-invert prose-lg max-w-none prose-headings:font-semibold prose-a:text-[#E95420] hover:prose-a:text-[#f06030] prose-code:text-[#E95420] prose-pre:bg-[#0d0d0d] prose-pre:border prose-pre:border-gray-800">
           <MDXRemote source={content} />
         </div>
       </article>

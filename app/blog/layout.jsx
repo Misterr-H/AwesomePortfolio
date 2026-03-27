@@ -2,8 +2,8 @@ import Link from 'next/link'
 
 export default function BlogLayout({ children }) {
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100">
-      <header className="border-b border-gray-800 sticky top-0 z-10 bg-gray-950/90 backdrop-blur-sm">
+    <div className="min-h-screen bg-[#0d0d0d] text-gray-100">
+      <header className="border-b border-gray-800 sticky top-0 z-10 bg-[#0d0d0d]/90 backdrop-blur-sm">
         <div className="max-w-3xl mx-auto px-4 py-4 flex items-center gap-6">
           <Link
             href="/"
