@@ -9,10 +9,143 @@ summary: >-
   assignment.
 tags:
   - zomato
-  - microservice
+  - system-design
+  - distributed-systems
+  - redis
 coverImage: /images/blog/zomato/coverImage.jpg
 ---
-this is a content\
-**bold\
-*italic\
-\&#xA;***![](WhatsApp%20Image%202026-03-26%20at%2012.21.32%20PM.jpeg)
+
+Zomato has roughly 300,000 active delivery partners on the platform during a Friday dinner rush. Each one is sending a GPS ping every 2–3 seconds. That's approximately **150,000 location events per second** flowing into their backend. Before a single rider can be assigned to your order, the system needs to know — right now, not 3 seconds ago — which of those 300,000 riders is within 3 km of your restaurant, is currently unassigned, and has historically accepted orders in this area.
+
+That problem is harder than it looks. And the way Zomato solves it is not what most engineers would reach for first.
+
+---
+
+## The obvious solution, and why it breaks
+
+The naive approach is straightforward: store every rider's GPS coordinates in a PostgreSQL table, add a geospatial index on the coordinates column, and run a radius query every time an order comes in.
+
+```sql
+SELECT rider_id FROM riders
+WHERE ST_DWithin(location, restaurant_point, 3000)
+AND status = 'available'
+ORDER BY ST_Distance(location, restaurant_point)
+LIMIT 20;
+```
+
+Clean. Readable. Completely falls apart at scale.
+
+Here's the math. 300,000 riders pinging every 2 seconds means 150,000 `UPDATE` operations per second on the riders table. A relational database doesn't just write that row — it updates indexes, writes to the WAL (write-ahead log), acquires row-level locks, and replicates to standbys. Under this write load, your geospatial index is being rebuilt constantly. The same table you're trying to read from for radius queries is being hammered with writes simultaneously.
+
+The result isn't a clean failure. It's unpredictable latency — sometimes 10ms, sometimes 800ms depending on lock contention state. And in a dispatch system where assignment speed is the core product metric, "sometimes 800ms" means thousands of orders per minute are working off stale rider data.
+
+This is a pattern that shows up across distributed systems: **the thing that's simple to model is rarely the thing that's safe to build on.** The numbers force the architecture.
+
+---
+
+## How rider locations actually work: Redis GeoSets
+
+Rider GPS coordinates don't live in a database. They live in memory.
+
+Every ping from a rider's app hits a lightweight ingestion endpoint, gets published to a Kafka topic, and a pool of consumers reads from that topic and writes to Redis using a single command:
+
+```
+GEOADD riders 77.2090 28.6139 "rider:456"
+```
+
+Redis GeoSets store coordinates encoded as a geohash inside a Sorted Set. The encoding is lossy by design — coordinates are stored with ~0.6 meter precision, which is more than sufficient for a radius query at city scale. The old value is simply overwritten on every ping. No history. No append. Just the latest position per rider. Memory footprint stays constant regardless of ping volume.
+
+When an order comes in, the dispatch service fires a single query:
+
+```
+GEOSEARCH riders FROMLONLAT 77.2090 28.6139 BYRADIUS 3 km ASC
+```
+
+This returns all rider IDs within 3 km of the restaurant coordinates, sorted by distance, in under 1ms on a well-configured Redis instance.
+
+A single Redis instance handles 500,000+ operations per second. PostgreSQL under the write load described earlier would struggle to do 5,000. The architecture isn't engineers choosing complexity for its own sake — the numbers make the choice for them.
+
+The Kafka layer in front of Redis matters too. The ingestion endpoint stays fast and never blocks. If Redis has a brief blip, events buffer in Kafka and consumers catch up. If a consumer crashes, another picks up the partition. **The thing receiving data and the thing storing data are decoupled — they scale independently and fail independently.** This is a principle worth remembering regardless of the specific technology.
+
+---
+
+## The dispatch loop: what actually happens after you place an order
+
+Finding nearby riders is the easy part. Getting one of them to accept the order within a time constraint is the actual engineering problem. Here's how the dispatch loop works:
+
+**T=0 — Order placed.**
+The order service emits an `ORDER_PLACED` event to Kafka. The dispatch service consumes it, runs `GEOSEARCH` within a 3 km radius, and gets back a ranked list of rider IDs. The notification service pushes job offers to all eligible riders simultaneously via FCM (Android) and APNS (iOS). Each rider sees the order details, restaurant location, estimated earnings.
+
+**T=30s — No acceptance yet.**
+Two things happen in parallel. First, `GEOSEARCH` re-runs — new riders may have entered the radius in the last 30 seconds. A rider finishing a nearby delivery, a rider who just came online. Those new entrants get notified. Second, acceptance probability scoring updates the priority queue — riders who historically decline orders in this area, at this time of day, get deprioritised in the next notification wave.
+
+**T=60s — Radius expands to 5 km.**
+An incentive modifier gets added to the offer. This isn't a random heuristic. The cost of paying a distant rider an extra ₹20–30 is structurally cheaper than the cost of a cancelled order: customer churn, restaurant SLA penalty, support ticket volume, damage to the on-time delivery metric that Zomato reports publicly. The system is making an economic trade-off, not just an engineering one.
+
+**T=90s — Radius expands to 8 km.** Incentive increases again.
+
+The loop continues until a rider accepts or the order is explicitly cancelled. This is a **liveness guarantee** baked into the system — the dispatch loop cannot simply time out silently. It escalates until assignment succeeds. Most system design discussions stop at "find the nearest rider." The escalation logic is where the real engineering lives.
+
+---
+
+## The concurrency problem nobody mentions: thundering herd
+
+Here's what happens during a dense lunch rush in a high-demand area like Koramangala or Connaught Place.
+
+A single order gets placed. `GEOSEARCH` returns 200 eligible riders within 3 km. All 200 get push notifications simultaneously. Fifty of them tap "Accept" within the same 3-second window.
+
+Now you have 50 concurrent write attempts hitting the same order record. The first one to succeed should win. The other 49 should get a clean rejection — not a corrupt state, not a double-assignment.
+
+The fix is atomic compare-and-swap at the order state layer:
+
+```
+SET order:12345:status "assigned" NX
+```
+
+The `NX` flag — "set only if not exists" — means only the first writer succeeds. All subsequent attempts find the key already set and fail cleanly. This is **idempotency at the dispatch layer**. The 49 riders who were a second too slow get their app state updated to "order already assigned" without any of them ever touching a relational database row under contention.
+
+This is a pattern that appears across every high-throughput assignment system. Uber uses it. DoorDash uses it. The specific technology varies; the principle doesn't.
+
+---
+
+## What breaks on New Year's Eve
+
+Peak load stress-tests every assumption the system was designed around.
+
+During rain events, supply collapses and demand spikes simultaneously. Everyone orders instead of going out. Riders don't want to ride in rain. The `GEOSEARCH` at 3 km that normally returns 40+ riders returns 3. The escalation to 5 km returns 7. The escalation to 8 km returns 11. At what radius does a 55-minute delivery time make the order economically not worth fulfilling? This is where Zomato's "promised delivery" guarantee gets genuinely difficult to honour.
+
+New Year's Eve has a different failure mode: demand is predictable and enormous, but geographically concentrated. Every restaurant in a party-heavy neighbourhood gets slammed simultaneously. Riders who are mid-delivery in those neighbourhoods are unavailable. Riders outside those neighbourhoods are sitting idle. The assignment system has the right total supply but wrong spatial distribution.
+
+This is the problem Zomato's Active Dispatch system was built to solve — a Deep Q-Network reinforcement learning model that recommends positioning to idle riders *before* orders hit, based on predicted demand. It doesn't replace the dispatch loop. It feeds the supply distribution that the dispatch loop depends on. The ML sits on top of the deterministic system, not inside it.
+
+That architectural boundary matters. The dispatch loop must be deterministic and fast — it runs on every order, under latency constraints, with hard correctness requirements. The RL model is a background process that shapes supply; it can afford to be slower and probabilistic. Mixing these two concerns would make both of them worse.
+
+---
+
+## The trade-off Zomato made, and why it was the right one
+
+The dispatch system optimises for **assignment speed over assignment quality**.
+
+It finds you the nearest available rider, not the optimal rider for this specific order. The nearest rider might be finishing a delivery in the opposite direction, might have a lower acceptance rate for long-distance drops, might be less efficient on two-wheelers in the specific neighbourhood your restaurant is in. The system doesn't fully account for any of this in the initial assignment pass.
+
+That's the correct trade-off. A 200ms assignment with a decent rider beats a 2-second optimal assignment every time in a latency-sensitive product. Customers feel waiting time acutely. Customers don't feel the difference between a rider with a 91% on-time rate and one with an 87% on-time rate.
+
+But this creates a downstream problem: **rider efficiency**. A rider optimally positioned for one assignment is often poorly positioned for the next. They complete a delivery in one neighbourhood and now they're far from the next dense demand cluster. This idle time between orders is pure cost — for Zomato (lower order throughput per rider) and for the rider (lower earnings per hour on the platform).
+
+This is why Active Dispatch exists. The geospatial matching solves the assignment problem. The RL model solves the supply distribution problem. They're two different systems solving two different things at two different time horizons, and conflating them is one of the most common mistakes in system design discussions about delivery platforms.
+
+---
+
+## What this system teaches you
+
+A few principles that generalise well beyond food delivery:
+
+**Hot paths never touch slow storage.** The path from order placed to rider notified has to be fast, every time, under any load. That path cannot include a relational database write under high contention. If your critical path touches slow storage, you haven't finished designing it.
+
+**Liveness guarantees require explicit escalation logic.** Retrying the same operation with the same parameters isn't escalation. Real liveness requires changing the parameters — expanding radius, increasing incentive, changing the candidate pool — until the constraint is satisfied.
+
+**The customer-facing product is a probabilistic contract.** The ETA Zomato shows you at order placement is a P50 estimate based on historical assignment times. When the dispatch loop escalates past its expected radius, that ETA updates. The system isn't lying to you at placement — it's giving you its best estimate and correcting when reality diverges. Engineering teams that try to show customers deterministic ETAs end up either over-promising or padding heavily. Zomato's approach is more honest and more accurate.
+
+**ML sits on top of deterministic systems, not inside them.** Active Dispatch improves supply distribution. The dispatch loop handles individual assignment. These have different latency requirements, different correctness requirements, and different failure modes. Keep them separate.
+
+The next time you're watching that rider icon move toward your apartment, the system that put them there ran a sub-millisecond geospatial query, executed a timed escalation loop, resolved a 50-way concurrency race with a single Redis command, and made an economic trade-off about how much your order is worth defending. All of that happened before you finished reading the restaurant's name on your confirmation screen.
