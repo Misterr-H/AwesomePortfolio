@@ -3,6 +3,7 @@ import { MDXRemote } from 'next-mdx-remote/rsc'
 import keystaticConfig from '../../../keystatic.config'
 import { notFound } from 'next/navigation'
 import Image from 'next/image'
+import Link from 'next/link'
 
 const SITE_URL = 'https://himanshu-saini.com'
 
@@ -87,6 +88,16 @@ export default async function BlogPostPage({ params }) {
       />
 
       <article>
+        {/* Back link */}
+        <div className="mb-8">
+          <Link
+            href="/blog"
+            className="text-sm text-gray-400 hover:text-[#E95420] transition-colors flex items-center gap-1"
+          >
+            ← Back to Blog
+          </Link>
+        </div>
+
         {/* Header */}
         <header className="mb-10">
           {post.tags?.length > 0 && (
@@ -124,7 +135,7 @@ export default async function BlogPostPage({ params }) {
         )}
 
         {/* MDX Content */}
-        <div className="prose prose-invert prose-lg max-w-none prose-headings:font-bold prose-a:text-blue-400 prose-code:text-blue-300 prose-pre:bg-gray-900 prose-pre:border prose-pre:border-gray-800">
+        <div className="prose prose-invert prose-lg max-w-none prose-headings:font-semibold prose-a:text-[#E95420] hover:prose-a:text-[#f06030] prose-code:text-[#E95420] prose-pre:bg-gray-950 prose-pre:border prose-pre:border-gray-800">
           <MDXRemote source={content} />
         </div>
       </article>
