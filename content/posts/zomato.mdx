@@ -13,137 +13,227 @@ tags:
   - redis
 coverImage: /images/blog/zomato/coverImage.png
 ---
-Zomato has roughly 300,000 active delivery partners on the platform during a Friday dinner rush. Each one is sending a GPS ping every 2–3 seconds. That's approximately **150,000 location events per second** flowing into their backend. Before a single rider can be assigned to your order, the system needs to know — right now, not 3 seconds ago — which of those 300,000 riders is within 3 km of your restaurant, is currently unassigned, and has historically accepted orders in this area.
-
-That problem is harder than it looks. And the way Zomato solves it is not what most engineers would reach for first.
-
+Zomato is one of the most successful startups in India. And I always find myself fascinated by the engineering behind it. When something works this seamlessly, no friction, no second-guessing, just order and wait, it means a great team of engineers has spent days and nights solving problems you never even see.
+ 
+Problems. Yes. And one that I keep coming back to: what if no rider has accepted my order yet? How does a system that looks completely calm on the outside manage to panic on the inside, because it made me a promise, and it simply cannot walk away from that promise. It must struggle. Hard enough to exhaust every available option before it considers cancelling my order and issuing a refund.
+ 
+It sounds simple on the surface. But once you tear apart each engineering layer, you'll find one of the most thoughtful and quietly complex parts of Zomato's entire backend.
+ 
 ---
-
-## The obvious solution, and why it breaks
-
-The naive approach is straightforward: store every rider's GPS coordinates in a PostgreSQL table, add a geospatial index on the coordinates column, and run a radius query every time an order comes in.
-
-```sql
-SELECT rider_id FROM riders
-WHERE ST_DWithin(location, restaurant_point, 3000)
-AND status = 'available'
-ORDER BY ST_Distance(location, restaurant_point)
-LIMIT 20;
-```
-
-Clean. Readable. Completely falls apart at scale.
-
-Here's the math. 300,000 riders pinging every 2 seconds means 150,000 `UPDATE` operations per second on the riders table. A relational database doesn't just write that row — it updates indexes, writes to the WAL (write-ahead log), acquires row-level locks, and replicates to standbys. Under this write load, your geospatial index is being rebuilt constantly. The same table you're trying to read from for radius queries is being hammered with writes simultaneously.
-
-The result isn't a clean failure. It's unpredictable latency — sometimes 10ms, sometimes 800ms depending on lock contention state. And in a dispatch system where assignment speed is the core product metric, "sometimes 800ms" means thousands of orders per minute are working off stale rider data.
-
-This is a pattern that shows up across distributed systems: **the thing that's simple to model is rarely the thing that's safe to build on.** The numbers force the architecture.
-
----
-
-## How rider locations actually work: Redis GeoSets
-
-Rider GPS coordinates don't live in a database. They live in memory.
-
-Every ping from a rider's app hits a lightweight ingestion endpoint, gets published to a Kafka topic, and a pool of consumers reads from that topic and writes to Redis using a single command:
-
+ 
+So let's dive in.
+ 
+But before we do, quick introduction: I'm Himanshu Saini, a 23 year old nerd working as Tech Lead at Hobfit. You'll find us on Shark Tank Season 5 soon enough.
+ 
+Now, before things go critical, and by critical I mean critical enough that the system has to press the RED Refund Button, let's look at what normal looks like first.
+ 
+Say today is the 1st of the month. Salary just credited. I open Zomato, spot my favorite Dosa at 66% off, delivery time 30 minutes, every flag is green. Green enough that I finally enter my UPI pin, hand over my money to the one app that reliably brings food to my doorstep, and go back to Instagram Reels. Dosa is coming in 30 minutes anyway.
+ 
+Perfect setup. Even better if it's a weekend and I'm already in bed.
+ 
+But let's keep things normal for now. What happens next? Obvious answer: Zomato starts looking for nearby riders.
+ 
+**T=0.** Zomato queries all riders within a 3 km radius of the restaurant. Each rider's app polls the server every 2 to 3 seconds, writing their updated GPS coordinates to Redis using `GEOADD`:
+ 
 ```
 GEOADD riders 77.2090 28.6139 "rider:456"
 ```
-
-Redis GeoSets store coordinates encoded as a geohash inside a Sorted Set. The encoding is lossy by design — coordinates are stored with \~0.6 meter precision, which is more than sufficient for a radius query at city scale. The old value is simply overwritten on every ping. No history. No append. Just the latest position per rider. Memory footprint stays constant regardless of ping volume.
-
-When an order comes in, the dispatch service fires a single query:
-
+ 
+The dispatch service then runs a single `GEOSEARCH` command against that Redis instance:
+ 
 ```
-GEOSEARCH riders FROMLONLAT 77.2090 28.6139 BYRADIUS 3 km ASC
+GEOSEARCH riders FROMLONLAT 77.2090 28.6139
+  BYRADIUS 3 km ASC
+  COUNT 50
+  ASC
 ```
-
-This returns all rider IDs within 3 km of the restaurant coordinates, sorted by distance, in under 1ms on a well-configured Redis instance.
-
-A single Redis instance handles 500,000+ operations per second. PostgreSQL under the write load described earlier would struggle to do 5,000. The architecture isn't engineers choosing complexity for its own sake — the numbers make the choice for them.
-
-The Kafka layer in front of Redis matters too. The ingestion endpoint stays fast and never blocks. If Redis has a brief blip, events buffer in Kafka and consumers catch up. If a consumer crashes, another picks up the partition. **The thing receiving data and the thing storing data are decoupled — they scale independently and fail independently.** This is a principle worth remembering regardless of the specific technology.
-
+ 
+This returns a ranked list of nearby available riders, sorted by distance, in under a millisecond. Yes, Redis. Not PostgreSQL. Storing and querying real-time GPS coordinates for 300,000 active riders in a relational database would set the server on fire. Fire hot enough that the engineering team wouldn't have time to dial 101 before the whole thing melted.
+ 
 ---
-
-## The dispatch loop: what actually happens after you place an order
-
-Finding nearby riders is the easy part. Getting one of them to accept the order within a time constraint is the actual engineering problem. Here's how the dispatch loop works:
-
-**T=0 — Order placed.**
-The order service emits an `ORDER_PLACED` event to Kafka. The dispatch service consumes it, runs `GEOSEARCH` within a 3 km radius, and gets back a ranked list of rider IDs. The notification service pushes job offers to all eligible riders simultaneously via FCM (Android) and APNS (iOS). Each rider sees the order details, restaurant location, estimated earnings.
-
-**T=30s — No acceptance yet.**
-Two things happen in parallel. First, `GEOSEARCH` re-runs — new riders may have entered the radius in the last 30 seconds. A rider finishing a nearby delivery, a rider who just came online. Those new entrants get notified. Second, acceptance probability scoring updates the priority queue — riders who historically decline orders in this area, at this time of day, get deprioritised in the next notification wave.
-
-**T=60s — Radius expands to 5 km.**
-An incentive modifier gets added to the offer. This isn't a random heuristic. The cost of paying a distant rider an extra ₹20–30 is structurally cheaper than the cost of a cancelled order: customer churn, restaurant SLA penalty, support ticket volume, damage to the on-time delivery metric that Zomato reports publicly. The system is making an economic trade-off, not just an engineering one.
-
-**T=90s — Radius expands to 8 km.** Incentive increases again.
-
-The loop continues until a rider accepts or the order is explicitly cancelled. This is a **liveness guarantee** baked into the system — the dispatch loop cannot simply time out silently. It escalates until assignment succeeds. Most system design discussions stop at "find the nearest rider." The escalation logic is where the real engineering lives.
-
----
-
-## The concurrency problem nobody mentions: thundering herd
-
-Here's what happens during a dense lunch rush in a high-demand area like Koramangala or Connaught Place.
-
-A single order gets placed. `GEOSEARCH` returns 200 eligible riders within 3 km. All 200 get push notifications simultaneously. Fifty of them tap "Accept" within the same 3-second window.
-
-Now you have 50 concurrent write attempts hitting the same order record. The first one to succeed should win. The other 49 should get a clean rejection — not a corrupt state, not a double-assignment.
-
-The fix is atomic compare-and-swap at the order state layer:
-
+ 
+Zomato sends a push notification with the order details and the delivery fee offered, to every rider that ranked in that query. Actually, let me take that back, not every rider. Only riders who were online, not currently on a delivery, or close enough to finishing a nearby drop that batching makes sense.
+ 
+Normal condition? A rider accepts, starts heading to the restaurant, your Dosa is on its way. Simple. Beautiful. Done.
+ 
+But let's say your planetary position gets a little misaligned.
+ 
+Misaligned enough that every single rider who just got notified about your order suddenly received a call from their wife, logged off the app, and headed home instead of the restaurant.
+ 
+Now what?
+ 
+Has anyone even thought about this case? Was the QA engineer at Zomato paid enough to think about this? Of course they were. I can almost guarantee that somewhere in Zomato's codebase there is a test case with a comment that reads:
+ 
 ```
-SET order:12345:status "assigned" NX
+# this case handles the scenario where every notified rider
+# has received a call from their wife
 ```
-
-The `NX` flag — "set only if not exists" — means only the first writer succeeds. All subsequent attempts find the key already set and fail cleanly. This is **idempotency at the dispatch layer**. The 49 riders who were a second too slow get their app state updated to "order already assigned" without any of them ever touching a relational database row under contention.
-
-This is a pattern that appears across every high-throughput assignment system. Uber uses it. DoorDash uses it. The specific technology varies; the principle doesn't.
-
+ 
+**T=30s.** No rider has accepted. The system notices. Zomato doesn't have access to your birth chart to check your planetary position, if they did, they probably wouldn't have let you place the order in the first place. Instead, the dispatch service runs the exact same `GEOSEARCH` query again, same radius, same restaurant coordinates, because new riders may have entered the 3 km zone in the last 30 seconds:
+ 
+```
+GEOSEARCH riders FROMLONLAT 77.2090 28.6139
+  BYRADIUS 3 km ASC
+  COUNT 50
+  ASC
+```
+ 
+A rider finishing a nearby delivery, someone who just came online. Zomato notifies them.
+ 
+But God has decided today is not your Dosa day.
+ 
+The planets misalign further. This batch of riders suddenly remembers they have a wedding to attend. And unlike your Dosa, the wedding has free food. So instead of heading to the restaurant to pick up your order, they headed straight to Vatika.
+ 
+Who cares about your Dosa when there's free biryani at a wedding.
+ 
 ---
-
-## What breaks on New Year's Eve
-
-Peak load stress-tests every assumption the system was designed around.
-
-During rain events, supply collapses and demand spikes simultaneously. Everyone orders instead of going out. Riders don't want to ride in rain. The `GEOSEARCH` at 3 km that normally returns 40+ riders returns 3. The escalation to 5 km returns 7. The escalation to 8 km returns 11. At what radius does a 55-minute delivery time make the order economically not worth fulfilling? This is where Zomato's "promised delivery" guarantee gets genuinely difficult to honour.
-
-New Year's Eve has a different failure mode: demand is predictable and enormous, but geographically concentrated. Every restaurant in a party-heavy neighbourhood gets slammed simultaneously. Riders who are mid-delivery in those neighbourhoods are unavailable. Riders outside those neighbourhoods are sitting idle. The assignment system has the right total supply but wrong spatial distribution.
-
-This is the problem Zomato's Active Dispatch system was built to solve — a Deep Q-Network reinforcement learning model that recommends positioning to idle riders *before* orders hit, based on predicted demand. It doesn't replace the dispatch loop. It feeds the supply distribution that the dispatch loop depends on. The ML sits on top of the deterministic system, not inside it.
-
-That architectural boundary matters. The dispatch loop must be deterministic and fast — it runs on every order, under latency constraints, with hard correctness requirements. The RL model is a background process that shapes supply; it can afford to be slower and probabilistic. Mixing these two concerns would make both of them worse.
-
+ 
+But Zomato will keep its promise against all odds. Or at least try its best. Even if it means bribing God.
+ 
+**T=60s.** No acceptance yet. This is where panic quietly kicks in on the backend. That Dosa means just a Dosa with Sambhar and Nariyal Chutney to you. To Zomato it means their existence. They must get it to your stomach.
+ 
+The dispatch service updates the `GEOSEARCH` query, radius now 5 km:
+ 
+```
+GEOSEARCH riders FROMLONLAT 77.2090 28.6139
+  BYRADIUS 5 km ASC
+  COUNT 50
+  ASC
+```
+ 
+You got 66% off on the order. Zomato is fine with that. But now they are also going to incentivise riders to pick this order on priority, even if it means losing their own margin on the delivery. That is why I love Zomato.
+ 
+But God has decided. No Dosa for you today.
+ 
+Just as a delivery partner spotted the incentive and was about to accept, his phone battery died. Not because it wasn't charged. Because you carry enough bad luck that it channelled directly into his device.
+ 
+While riders were enjoying the wedding and shopping for their wives, your Dosa sat at the restaurant counter getting cold, waiting to be picked up by someone, anyone.
+ 
+**T=90s.** Zomato is now putting everything on the table. This is the gamble. `GEOSEARCH` expands again to 8 km, incentive increases again:
+ 
+```
+GEOSEARCH riders FROMLONLAT 77.2090 28.6139
+  BYRADIUS 8 km ASC
+  COUNT 50
+  ASC
+```
+ 
+One and a half minutes have passed. No rider found. But Zomato is not like your girlfriend who breaks promises. Zomato will keep its promise until its last breath.
+ 
 ---
-
-## The trade-off Zomato made, and why it was the right one
-
-The dispatch system optimises for **assignment speed over assignment quality**.
-
-It finds you the nearest available rider, not the optimal rider for this specific order. The nearest rider might be finishing a delivery in the opposite direction, might have a lower acceptance rate for long-distance drops, might be less efficient on two-wheelers in the specific neighbourhood your restaurant is in. The system doesn't fully account for any of this in the initial assignment pass.
-
-That's the correct trade-off. A 200ms assignment with a decent rider beats a 2-second optimal assignment every time in a latency-sensitive product. Customers feel waiting time acutely. Customers don't feel the difference between a rider with a 91% on-time rate and one with an 87% on-time rate.
-
-But this creates a downstream problem: **rider efficiency**. A rider optimally positioned for one assignment is often poorly positioned for the next. They complete a delivery in one neighbourhood and now they're far from the next dense demand cluster. This idle time between orders is pure cost — for Zomato (lower order throughput per rider) and for the rider (lower earnings per hour on the platform).
-
-This is why Active Dispatch exists. The geospatial matching solves the assignment problem. The RL model solves the supply distribution problem. They're two different systems solving two different things at two different time horizons, and conflating them is one of the most common mistakes in system design discussions about delivery platforms.
-
+ 
+But here is where Zomato does something most engineers don't think about when designing dispatch systems. Something that doesn't make it into most system design interviews. Something quietly brilliant.
+ 
+While the `GEOSEARCH` has been expanding its radius looking for idle riders, there is another type of rider the system has been watching. A rider who is currently mid-delivery. Already on the road. Already moving. Heading to drop off someone else's order somewhere close to your restaurant.
+ 
+Zomato calls this a batching candidate.
+ 
+The dispatch service knows where every active rider is heading and when they are expected to finish their current drop. If a rider's drop location is within a reasonable distance of your restaurant, and their estimated finish time aligns with when your Dosa will be ready, the system can pre-assign them to your order before they even finish their current delivery.
+ 
+The rider gets a notification mid-ride. Something like: "New order nearby after your current drop." They accept while still delivering someone else's biryani. The moment they hand off that order, they turn directly toward your restaurant without ever going idle. No gap. No wasted movement.
+ 
+For you, this means the ETA on your screen quietly updates. Not because something went wrong. Because Zomato just found a rider in a way the naive dispatch model never considered.
+ 
+This is the part that separates a good dispatch system from a great one. A simple system looks for idle riders. Zomato's system looks at the entire fleet, idle and active, and asks which rider, accounting for their current trajectory, their expected finish time, and the distance to your restaurant, can get to you the fastest.
+ 
+The `GEOSEARCH` finds who is nearby. The batching logic finds who is useful.
+ 
+Those are two different questions. And asking both of them is what keeps your Dosa alive when the planets are misaligned.
+ 
 ---
-
-## What this system teaches you
-
-A few principles that generalise well beyond food delivery:
-
-**Hot paths never touch slow storage.** The path from order placed to rider notified has to be fast, every time, under any load. That path cannot include a relational database write under high contention. If your critical path touches slow storage, you haven't finished designing it.
-
-**Liveness guarantees require explicit escalation logic.** Retrying the same operation with the same parameters isn't escalation. Real liveness requires changing the parameters — expanding radius, increasing incentive, changing the candidate pool — until the constraint is satisfied.
-
-**The customer-facing product is a probabilistic contract.** The ETA Zomato shows you at order placement is a P50 estimate based on historical assignment times. When the dispatch loop escalates past its expected radius, that ETA updates. The system isn't lying to you at placement — it's giving you its best estimate and correcting when reality diverges. Engineering teams that try to show customers deterministic ETAs end up either over-promising or padding heavily. Zomato's approach is more honest and more accurate.
-
-**ML sits on top of deterministic systems, not inside them.** Active Dispatch improves supply distribution. The dispatch loop handles individual assignment. These have different latency requirements, different correctness requirements, and different failure modes. Keep them separate.
-
-The next time you're watching that rider icon move toward your apartment, the system that put them there ran a sub-millisecond geospatial query, executed a timed escalation loop, resolved a 50-way concurrency race with a single Redis command, and made an economic trade-off about how much your order is worth defending. All of that happened before you finished reading the restaurant's name on your confirmation screen.
+ 
+But every system has a limit. Even Zomato.
+ 
+There is a hard truth sitting quietly behind all this escalation logic. Your Dosa has been sitting on the restaurant counter for a while now. The Sambhar is cooling. The Nariyal Chutney is starting to dry at the edges. The restaurant staff have glanced at it three times already wondering when someone is going to pick it up.
+ 
+At some point, even if a rider accepts right now, the promise is already broken. Not the delivery promise. The food quality promise. The 30 minutes you were shown at checkout wasn't just a delivery time. It was a freshness contract.
+ 
+This is where the order state machine becomes the most important piece of engineering in the entire system.
+ 
+Every Zomato order lives in a state machine. A finite set of states it can be in at any point in time, with strict rules about which transitions are allowed. The happy path states are the ones everyone knows: `ORDER_PLACED`, `RESTAURANT_ACCEPTED`, `RIDER_ASSIGNED`, `ORDER_PICKED_UP`, `ORDER_DELIVERED`.
+ 
+But the failure states are where the real engineering lives.
+ 
+When no rider accepts within the normal window, the order transitions to `AWAITING_ASSIGNMENT`. The escalation loop runs. Radius expands. Incentives increase. Batching candidates are evaluated. The system is doing everything it can.
+ 
+But the order state machine has a timer running in parallel with all of this. A hard timeout. Not on the assignment attempt, but on the order age. The moment your food has been sitting at the restaurant beyond a threshold, somewhere around 20 to 25 minutes depending on the food type and restaurant, the system knows that fulfilling this order is no longer in your interest even if it is technically possible.
+ 
+A rider accepting at this point doesn't fix the problem. It makes it worse. You wait another 20 minutes for delivery, receive cold food, leave a one star review, call customer support, and never order from that restaurant again. Zomato loses more from fulfilling this order badly than from cancelling it cleanly.
+ 
+So the state machine transitions to `ASSIGNMENT_FAILED`.
+ 
+And this transition is irreversible. Once an order enters `ASSIGNMENT_FAILED`, no amount of radius expansion or incentive increase can pull it back. The escalation loop terminates. The order is done.
+ 
+What happens next is a coordinated sequence that fires simultaneously across multiple services. The restaurant gets notified to stop holding the food. The payment service triggers a full refund to your original payment method, usually within seconds for UPI. The notification service sends you a cancellation message. And somewhere in Zomato's internal ops dashboard, a flag gets raised if this failure happened in a geography where it is happening repeatedly, because repeated `ASSIGNMENT_FAILED` transitions in the same zone at the same time of day are not bad luck. They are a supply problem. And supply problems need human attention, not just a better algorithm.
+ 
+The RED Refund Button, as it turns out, is not a single button. It is a coordinated state transition that touches the restaurant, the payment system, the customer, and the ops team in one atomic sequence.
+ 
+---
+ 
+Now let's talk about what you actually saw on your screen during all of this.
+ 
+"Finding a delivery partner."
+ 
+That's it. That's all Zomato showed you. A calm, reassuring message with a gentle animation. No "radius expanded to 8 km." No "incentive increased by ₹30." No "batching candidate evaluated." No "your order is in `AWAITING_ASSIGNMENT` state and the escalation loop is on its fourth iteration."
+ 
+Just "Finding a delivery partner."
+ 
+This is not an accident. This is one of the most deliberate product decisions in the entire system.
+ 
+Zomato knows something important about human psychology. The moment you see "No riders available" you cancel. Not because the situation is hopeless, because the system is actively working to fix it, but because uncertainty is more uncomfortable than loss. A refund feels cleaner than waiting for something that might not come. So Zomato never shows you the uncertainty. They show you progress, or at least the appearance of progress, while the backend does the hard work.
+ 
+Your ETA quietly updated from 30 minutes to 42 minutes somewhere around T=60s. You probably noticed. You probably assumed traffic. You didn't know it was because the system just expanded the search radius to 5 km and the nearest available rider is now further away. Zomato didn't lie to you. They just didn't explain themselves. The ETA update was honest. The silence around why it updated was a product decision.
+ 
+This is a pattern that shows up in every great consumer product at scale. The backend complexity is real and it is enormous. But the user experience sits on top of it like a still lake on top of a storm drain. Everything turbulent below. Everything calm above.
+ 
+The "Finding a delivery partner" message is doing more emotional work than any other string in Zomato's entire frontend codebase. It is buying the dispatch system time. Every second you spend reading that message calmly is a second the escalation loop gets to run another iteration, expand another radius, evaluate another batching candidate, notify another rider.
+ 
+The engineering keeps the promise. The UX protects the trust while the engineering does its job.
+ 
+And if the system ultimately fails, if the order hits `ASSIGNMENT_FAILED` and the RED Refund Button fires, that is the first and only moment Zomato breaks the calm surface and tells you something went wrong. Not with a technical explanation. Just a clean cancellation notification and a refund that hits your account before you finish reading it.
+ 
+You close the app mildly annoyed. You don't know that the system ran a geospatial query eleven times, evaluated three batching candidates, increased the rider incentive twice, and held on until the food was too cold to save before it gave up.
+ 
+You just know your Dosa didn't arrive.
+ 
+And Zomato knows they have one chance to make that refund so fast and so clean that you open the app again tomorrow.
+ 
+---
+ 
+But everything we talked about until now assumes one thing. That riders exist somewhere. That the system has supply to work with, even if that supply is stubborn, attending weddings, or mid-delivery three neighbourhoods away.
+ 
+The truly hard version of this problem is when supply collapses entirely.
+ 
+Picture this. It is raining heavily in Bangalore. Not drizzling. The kind of rain where water is coming sideways and auto drivers are charging 3x. Everyone in the city has made the same decision simultaneously: I am not going outside, I am ordering food. Zomato's order volume spikes. And at the exact same moment, riders start logging off. Nobody wants to ride a two-wheeler in this rain. The ones who stay online are getting snapped up instantly by the first orders they see.
+ 
+Your Dosa order lands in this environment.
+ 
+`GEOSEARCH` at 3 km returns two riders. Both get notified. Both are already being considered for three other orders simultaneously. The radius expands to 5 km. Four riders. Same problem. Expands to 8 km. The incentive is now high enough that a rider in a dry area might consider it. Maybe one of them accepts. Maybe none of them do.
+ 
+This is not a dispatch problem anymore. This is a supply problem. And no amount of elegant Redis querying or batching logic or incentive escalation fixes a supply problem in real time. You cannot algorithmically conjure riders who are not there.
+ 
+This is exactly why Zomato built Active Dispatch.
+ 
+Active Dispatch is a Deep Q-Network based reinforcement learning model that runs continuously in the background. It watches demand patterns, weather, time of day, historical order density by neighbourhood, and it recommends positioning to idle riders before the orders even hit. Not after. Before. It tells a rider sitting idle in Koramangala: move to Indiranagar, demand is about to spike there. The rider follows the recommendation, positions themselves in the right place, and when your order comes in they are already nearby.
+ 
+The dispatch loop solves the assignment problem in real time. Active Dispatch solves the supply distribution problem before real time. These are two different systems operating at two different time horizons and keeping them architecturally separate is one of the smartest structural decisions in Zomato's entire engineering org. The real time system needs to be fast, deterministic and correct. The ML system can afford to be slower and probabilistic. Mixing their concerns would make both of them worse.
+ 
+But on the truly bad days, even Active Dispatch cannot help. When an entire city decides to stay home simultaneously, when a festival empties the streets, when a weather event is severe enough that no recommendation model predicted it accurately, the supply is simply not there. Orders fail faster in this scenario because the system detects the supply collapse early and does not waste time running through the full escalation loop against an empty pool.
+ 
+Your order gets cancelled. Your refund arrives. Zomato takes the loss.
+ 
+And somewhere in Zomato's engineering org, an on-call alert fires. Not because one order failed. Because fifty orders failed in the same zone in the same ten minute window. A human looks at the dashboard. A supply intervention gets triggered. More riders get incentivised to come online. The storm drain under the still lake gets a little louder.
+ 
+---
+ 
+The next time your Zomato order gets delayed and you impatiently refresh the app, remember what is actually happening underneath that calm interface.
+ 
+A geospatial query has run multiple times against a Redis instance storing the live location of hundreds of thousands of riders. An escalation loop has expanded its search radius twice and increased the payout to a stranger to convince them to ride across the city for your food. A batching algorithm has evaluated every rider currently mid-delivery to see if any of their routes can be bent in your favour. A state machine is tracking your order through every possible failure transition with a timer that knows exactly when your food stops being worth saving. An RL model trained on millions of historical orders nudged a rider into the right neighbourhood an hour ago so they would be nearby when you needed them.
+ 
+And a single frontend string, "Finding a delivery partner", is holding your trust together while all of it runs.
+ 
+That is what great engineering looks like. Not the part that works when everything goes right. The part that keeps working, quietly, invisibly, through every misaligned planet, every wedding, every dead battery, every monsoon, until it has genuinely exhausted every option available to it.
+ 
+Zomato didn't build a food delivery app. They built a system that refuses to give up on your Dosa until the last possible moment.
+ 
+I think that deserves more credit than it gets.
