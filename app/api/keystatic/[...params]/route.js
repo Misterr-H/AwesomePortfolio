@@ -1,20 +1,34 @@
 import { makeRouteHandler } from '@keystatic/next/route-handler'
 import keystaticConfig from '../../../../keystatic.config'
 
-// Lazily initialise so missing env vars don't crash the build —
-// the error surfaces at request time instead.
 let _handler
-function handler() {
+function getHandler() {
   if (!_handler) {
     _handler = makeRouteHandler({ config: keystaticConfig })
   }
   return _handler
 }
 
-export function GET(req) {
-  return handler().GET(req)
+export async function GET(req) {
+  try {
+    return await getHandler().GET(req)
+  } catch (e) {
+    console.error('[keystatic] GET error:', e.message)
+    return new Response(JSON.stringify({ error: e.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
 }
 
-export function POST(req) {
-  return handler().POST(req)
+export async function POST(req) {
+  try {
+    return await getHandler().POST(req)
+  } catch (e) {
+    console.error('[keystatic] POST error:', e.message)
+    return new Response(JSON.stringify({ error: e.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
 }

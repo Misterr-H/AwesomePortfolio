@@ -1,5 +1,5 @@
 import { createReader } from '@keystatic/core/reader'
-import { DocumentRenderer } from '@keystatic/core/renderer'
+import { MDXRemote } from 'next-mdx-remote/rsc'
 import keystaticConfig from '../../../keystatic.config'
 import { notFound } from 'next/navigation'
 import Image from 'next/image'
@@ -58,11 +58,10 @@ function formatDate(dateStr) {
 }
 
 export default async function BlogPostPage({ params }) {
-  const post = await reader.collections.posts.read(params.slug, {
-    resolveLinkedFiles: true,
-  })
+  const post = await reader.collections.posts.read(params.slug)
   if (!post) notFound()
 
+  // post.content is () => Promise<string> — call it to get the raw MDX string
   const content = await post.content()
 
   const jsonLd = {
@@ -126,7 +125,7 @@ export default async function BlogPostPage({ params }) {
 
         {/* MDX Content */}
         <div className="prose prose-invert prose-lg max-w-none prose-headings:font-bold prose-a:text-blue-400 prose-code:text-blue-300 prose-pre:bg-gray-900 prose-pre:border prose-pre:border-gray-800">
-          <DocumentRenderer document={content} />
+          <MDXRemote source={content} />
         </div>
       </article>
     </>
