@@ -1,19 +1,16 @@
 import { config, collection, fields } from '@keystatic/core'
 
-const isGitHub =
-  typeof process !== 'undefined' && !!process.env.KEYSTATIC_GITHUB_CLIENT_ID
+const isDev = process.env.NODE_ENV === 'development'
 
 export default config({
-  storage: isGitHub
-    ? {
+  storage: isDev
+    ? { kind: 'local' }
+    : {
         kind: 'github',
         repo: {
           owner: 'Misterr-H',
           name: 'AwesomePortfolio',
         },
-      }
-    : {
-        kind: 'local',
       },
   collections: {
     posts: collection({
